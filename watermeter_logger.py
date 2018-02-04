@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # Credits to python port of nrf24l01, Joao Paulo Barrac & maniacbugs original c library, and this blog: http://blog.riyas.org
 
-from nrf24 import NRF24
+import serial
 import time
 import os
 import logging
@@ -11,7 +11,6 @@ import sys, traceback
 import unicodedata
 import pytz
 import requests
-import RPi.GPIO as GPIO
 from datetime import datetime, timedelta
 from ConfigParser import SafeConfigParser
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -21,11 +20,10 @@ import urllib2
 
 def remoteLog(valueToLog):
 	logger.info('Logging remotely...')
-	data = 'homelogdata,graph=waterMeter value='+str(valueToLog)
 
-	req = urllib2.Request(REMOTELOG_URL, data)
-	req.add_header('Content-Length', '%d' % len(data))
-	req.add_header('Content-Type', 'application/octet-stream')	
+	URL=REMOTELOG_URL+ "?type=command&param=udevice&idx="+ REMOTELOG_IDX+ "&svalue="+ str(valueToLog)
+
+	req = urllib2.Request(URL)
 	
 	try:
 		response = urllib2.urlopen(req, timeout=5)
@@ -35,7 +33,7 @@ def remoteLog(valueToLog):
 		logger.info('URLError: '+ str(e))
 	else:
 		result = response.read()
-		logger.info('successfully logged data (' + data + ') remotely')
+		logger.info('successfully logged data (' + str(valueToLog) + ') remotely')
 
 ###########################
 # PERSONAL CONFIG FILE READ
@@ -51,6 +49,9 @@ LOG_PERIOD = parser.getint('config', 'log_period')
 
 # remote logging URL
 REMOTELOG_URL = parser.get('config', 'remotelog_url')
+
+# Idx
+REMOTELOG_IDX = parser.get('config', 'sensor_idx')
 
 #################
 #  LOGGING SETUP
@@ -93,26 +94,7 @@ sys.stderr = MyLogger(logger, logging.ERROR)
 
 logger.info('Starting Watermeter logger')
 
-GPIO.setwarnings(False)
-
-pipes = [[0xf0, 0xf0, 0xf0, 0xf0, 0xe1], [0xf0, 0xf0, 0xf0, 0xf0, 0xd2]]
-
-radio = NRF24()
-radio.begin(0, 0,25,7) #set gpio 25 as CE pin
-radio.setRetries(15,15)
-radio.setPayloadSize(32)
-radio.setChannel(0x4c)
-radio.setDataRate(NRF24.BR_250KBPS)
-radio.setPALevel(NRF24.PA_MAX)
-radio.setAutoAck(1)
-radio.openWritingPipe(pipes[0])
-radio.openReadingPipe(1, pipes[1])
-
-radio.startListening()
-
-#radio.stopListening()
-#radio.printDetails()
-#radio.startListening()
+ser = serial.Serial('/dev/ttyUSB0', 115200)
 
 old_counter_value = -1
 total_in_period = 0
@@ -139,21 +121,7 @@ iter = 0
 
 try:
 	while True:
-		pipe = [0]
-		while not radio.available(pipe, True):
-			time.sleep(0.333)
-			iter = iter +1
-			if iter == 1000:
-				logger.info("still alive, listening...")
-				iter = 0
-		recv_buffer = []
-		radio.read(recv_buffer)
-		out =''
-		for i in recv_buffer:
-			if (i != 0):
-				out += chr(i)
-			else:
-				out += "X"
+		out = ser.readline()
 		logger.info('Received: %s' % out)
 		params = out.split(":")
 		if (len(params) == 3): #protection again corrupted/incomplete messages
